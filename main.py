@@ -7,6 +7,10 @@ from PySide6.QtGui import QAction, QFont, QIcon, QFontDatabase
 from PySide6.QtCore import Qt
 import ezdxf
 
+from PySide6.QtWidgets import QGraphicsLineItem
+from PySide6.QtGui import QPen
+from PySide6.QtCore import QPointF
+from canvas import Canvas
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -21,6 +25,9 @@ class MainWindow(QMainWindow):
         self.init_menu_bar()
         self.init_tool_bar()
         self.init_font_test_panel()
+
+        self.canvas = Canvas(self)
+        self.setCentralWidget(self.canvas)
 
     def init_menu_bar(self):
         menubar = self.menuBar()
@@ -88,19 +95,29 @@ class MainWindow(QMainWindow):
         font = QFont(font_name, font_size)
         self.preview_label.setFont(font)
         self.preview_label.setText(test_text)
+
     def open_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "開啟 DXF 檔案", "", "DXF 檔案 (*.dxf);;所有檔案 (*.*)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "開啟 DXF 檔案", "", "DXF 檔案 (*.dxf);;所有檔案 (*.*)")
         if file_path:
             try:
                 import ezdxf
                 doc = ezdxf.readfile(file_path)
                 msp = doc.modelspace()
 
-                entities_info = [f"{entity.dxftype()}" for entity in msp]
-                info_str = "\n".join(entities_info[:20])
+                self.canvas.scene.clear()  # 清除現有圖元
 
-                QMessageBox.information(self, "DXF 圖元資訊（前20個）", info_str)
+                for entity in msp:
+                    if entity.dxftype() == 'LINE':
+                        start = entity.dxf.start
+                        end = entity.dxf.end
+                        line = QGraphicsLineItem(start[0], -start[1], end[0], -end[1])
+                        pen = QPen(Qt.GlobalColor.black)
+                        pen.setWidth(1)
+                        line.setPen(pen)
+                        self.canvas.scene.addItem(line)
+
+                QMessageBox.information(self, "載入成功", f"成功載入 {file_path}")
+
             except Exception as e:
                 QMessageBox.warning(self, "讀取 DXF 檔案錯誤", f"錯誤訊息：{str(e)}")
 
