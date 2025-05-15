@@ -17,72 +17,105 @@ class Canvas(QGraphicsView):
 
     def load_dxf(self, file_path, scale=1.0):
         import ezdxf
+        from PySide6.QtGui import QFont, QPainterPath
         doc = ezdxf.readfile(file_path)
         msp = doc.modelspace()
 
         self.scene.clear()
-        pen = QPen(QColor("black"))
-
-        huge_entities = []
+        layers = {}
 
         for entity in msp:
-            try:
-                if entity.dxftype() == "LINE":
-                    start, end = entity.dxf.start, entity.dxf.end
-                    item = QGraphicsLineItem(
-                        start[0]*scale, -start[1]*scale, end[0]*scale, -end[1]*scale
+            layer_name = entity.dxf.layer
+        if layer_name not in layers:
+            layers[layer_name] = QGraphicsItemGroup()
+            self.scene.addItem(layers[layer_name])
+
+        pen = QPen(QColor("black"))
+
+        item = None  # 明確初始化 item
+
+        if entity.dxftype() == "LINE":
+            start, end = entity.dxf.start, entity.dxf.end
+            item = QGraphicsLineItem(
+                start[0]*scale, -start[1]*scale, end[0]*scale, -end[1]*scale
+            )
+
+        elif entity.dxftype() in ["POLYLINE", "LWPOLYLINE"]:
+            with entity.points() as points:
+                points = list(points)
+                item = QGraphicsItemGroup()
+                for i in range(len(points)-1):
+                    s, e = points[i], points[i+1]
+                    line_item = QGraphicsLineItem(
+                        s[0]*scale, -s[1]*scale, e[0]*scale, -e[1]*scale
                     )
+                    line_item.setPen(pen)
+                    item.addToGroup(line_item)
+            self.scene.addItem(item)  
 
-                elif entity.dxftype() in ["POLYLINE", "LWPOLYLINE"]:
-                    with entity.points() as points:
-                        points = list(points)
-                        item = QGraphicsItemGroup()
-                    for i in range(len(points)-1):
-                        s, e = points[i], points[i+1]
-                        line_item = QGraphicsLineItem(
-                            s[0]*scale, -s[1]*scale, e[0]*scale, -e[1]*scale
-                        )
-                        item.addToGroup(line_item)
+        elif entity.dxftype() == "POINT":
+            center = entity.dxf.location
+            point_size = 5
+            item = self.scene.addEllipse(
+                center[0]*scale - point_size/2,
+                -center[1]*scale - point_size/2,
+                point_size, point_size, pen
+            )
 
-                elif entity.dxftype() == "POINT":
-                    center = entity.dxf.location
-                    point_size = 5
-                    item = self.scene.addEllipse(
-                    center[0]*scale - point_size/2,
-                    -center[1]*scale - point_size/2,
-                    point_size, point_size, pen
-                )
+        elif entity.dxftype() == "CIRCLE":
+            center = entity.dxf.center
+            radius = entity.dxf.radius
+            item = self.scene.addEllipse(
+                (center[0]-radius)*scale,
+                -(center[1]+radius)*scale,
+                radius*2*scale,
+                radius*2*scale, pen
+            )
 
-                elif entity.dxftype() == "CIRCLE":
-                    center = entity.dxf.center
-                    radius = entity.dxf.radius
-                    item = self.scene.addEllipse(
-                    (center[0]-radius)*scale,
-                    -(center[1]+radius)*scale,
-                    radius*2*scale,
-                    radius*2*scale, pen
-                )
+        elif entity.dxftype() == "ARC":
+            center = entity.dxf.center
+            radius = entity.dxf.radius
+            start_angle = entity.dxf.start_angle
+            end_angle = entity.dxf.end_angle
 
-                else:
-                    continue
+            path = QPainterPath()
+            path.arcMoveTo(
+                (center[0] - radius)*scale,
+                -(center[1] + radius)*scale,
+                radius*2*scale,
+                radius*2*scale,
+                -start_angle
+            )
+            path.arcTo(
+                (center[0] - radius)*scale,
+                -(center[1] + radius)*scale,
+                radius*2*scale,
+                radius*2*scale,
+                -start_angle,
+                -(end_angle - start_angle)
+            )
+            item = self.scene.addPath(path, pen)
 
-                bbox = item.boundingRect()
-                if bbox.width() > 5000 or bbox.height() > 5000:
-                    huge_entities.append((entity.dxftype(), bbox))
-                else:
-                    item.setPen(pen)
-                    item.setFlags(QGraphicsLineItem.ItemIsSelectable | QGraphicsLineItem.ItemIsMovable)
-                    self.scene.addItem(item)
+        elif entity.dxftype() == "TEXT":
+            insert_point = entity.dxf.insert
+            text = entity.dxf.text
+            height = entity.dxf.height
+            font = QFont("Microsoft JhengHei", height * scale)
+            item = self.scene.addText(text, font)
+            item.setPos(insert_point[0] * scale, -insert_point[1] * scale)
+            item.setDefaultTextColor(QColor("black"))
 
-            except Exception as e:
-                print(f"Error processing {entity.dxftype()}: {e}")
+        # 統一設定（注意有些圖元無法設定筆刷）
+        if entity.dxftype() in ["LINE", "ARC", "CIRCLE", "POINT"]:
+            item.setPen(pen)
 
+        if item:
+            item.setFlags(QGraphicsLineItem.ItemIsSelectable | QGraphicsLineItem.ItemIsMovable)
+            layers[layer_name].addToGroup(item)
+
+        self.layers = layers
         self.scene.setSceneRect(self.scene.itemsBoundingRect())
         self.fitInView(self.scene.itemsBoundingRect(), Qt.KeepAspectRatio)
-
-        if huge_entities:
-            huge_info = "\n".join([f"{etype}: {bbox}" for etype, bbox in huge_entities])
-            QMessageBox.warning(self, "偵測到巨大圖元！", f"以下圖元過於巨大可能導致顯示異常：\n{huge_info}")
 
 
     def wheelEvent(self, event: QWheelEvent):
